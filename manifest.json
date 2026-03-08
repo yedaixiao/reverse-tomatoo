@@ -1,0 +1,10 @@
+{
+  "id": "clock-timer-sidebar",
+  "name": "Clock Timer Sidebar",
+  "version": "1.0.0",
+  "minAppVersion": "1.5.0",
+  "description": "侧栏时钟计时插件：自动写入当日日记并统计事件耗时。",
+  "author": "GitHub Copilot",
+  "authorUrl": "https://github.com",
+  "isDesktopOnly": false
+}
