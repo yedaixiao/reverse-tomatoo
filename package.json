@@ -1,8 +1,15 @@
 {
   "name": "obsidian-clock-timer",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "An Obsidian plugin for clock-style time tracking with daily note logging and daily summaries.",
   "main": "main.js",
+  "author": "yedaixiao",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/yedaixiao/reverse-tomatoo.git"
+  },
+  "homepage": "https://github.com/yedaixiao/reverse-tomatoo",
   "scripts": {
     "dev": "node esbuild.config.mjs",
     "build": "tsc -noEmit -skipLibCheck && node esbuild.config.mjs production"
@@ -13,8 +20,6 @@
     "timer",
     "time-tracking"
   ],
-  "author": "GitHub Copilot",
-  "license": "MIT",
   "devDependencies": {
     "@types/node": "^22.13.10",
     "esbuild": "^0.19.12",

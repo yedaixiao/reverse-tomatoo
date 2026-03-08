@@ -25,6 +25,32 @@ Track total time for the day and time spent per event/task
 Support the Eisenhower Matrix (four quadrants) for task management
 Support adding “loose”/ad-hoc tasks like a todo list, and assigning/distributing them into categories/tasks
 
+## 安装
+
+### 手动安装
+
+1. 打开本仓库的 Releases 页面。
+2. 下载 `main.js`、`manifest.json`、`styles.css`。
+3. 在你的 Obsidian vault 中进入 `.obsidian/plugins/reverse-tomato/`。
+4. 将上述文件复制进去。
+5. 在 Obsidian 的社区插件页面启用 `reverse-tomato`。
+
+## 功能概览
+
+- 侧栏时钟与专注计时
+- 自动记录到当日日记
+- 事件统计与可视化分析
+- 支持补录事件
+- 收集箱任务收集、分配与整理
+- 四象限任务分类
+- 适配较小空间的紧凑侧栏界面
+
+## 发布信息
+
+- 插件 ID：`reverse-tomato`
+- 最低 Obsidian 版本：`1.5.0`
+- 当前版本：`1.0.1`
+
 ## 开发
 
 安装依赖后可使用：
