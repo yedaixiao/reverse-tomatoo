@@ -144,6 +144,35 @@ interface DailyNoteConfig {
   source: 'plugin' | 'official';
 }
 
+interface OfficialDailyNotesPlugin {
+  enabled?: boolean;
+  instance?: {
+    options?: {
+      folder?: string;
+      format?: string;
+      template?: string;
+      templatePath?: string;
+      templateFile?: string;
+      templateLocation?: string;
+    };
+    createDailyNote?: () => Promise<TFile | null> | TFile | null;
+    createAndOpenDailyNote?: () => Promise<TFile | null> | TFile | null;
+  };
+  options?: {
+    folder?: string;
+    format?: string;
+    template?: string;
+    templatePath?: string;
+    templateFile?: string;
+    templateLocation?: string;
+  };
+}
+
+interface CommandRegistryLike {
+  executeCommandById?: (id: string) => Promise<boolean> | boolean;
+  commands?: Record<string, unknown>;
+}
+
 interface ClockTimerPluginData {
   settings?: Partial<ClockTimerSettings>;
   sessions?: Array<
@@ -706,14 +735,7 @@ export default class ClockTimerPlugin extends Plugin {
   }
 
   public getDailyNotePath(targetMoment = moment()): string {
-    const config = this.getResolvedDailyNoteConfig();
-    const fileName = `${targetMoment.format(config.format)}.md`;
-
-    if (!config.folder) {
-      return normalizePath(fileName);
-    }
-
-    return normalizePath(`${config.folder}/${fileName}`);
+    return this.getDailyNotePathForConfig(targetMoment, this.getDailyNoteConfigForCreation(targetMoment));
   }
 
   public getDailyNoteSourceLabel(): string {
@@ -837,7 +859,7 @@ export default class ClockTimerPlugin extends Plugin {
   public async createOrOpenTodayDailyNote(openAfterCreate = true): Promise<void> {
     const dateKey = this.getTodayDateKey();
     const file = await this.getOrCreateDailyNote(dateKey);
-    await this.syncDailyNoteForDate(dateKey);
+    await this.syncDailyNoteForDate(dateKey, file);
 
     if (openAfterCreate) {
       await this.app.workspace.getLeaf(true).openFile(file);
@@ -1227,6 +1249,16 @@ export default class ClockTimerPlugin extends Plugin {
     return [...new Set(dateKeys)].sort();
   }
 
+  private getDailyNotePathForConfig(targetMoment: moment.Moment, config: DailyNoteConfig): string {
+    const fileName = `${targetMoment.format(config.format)}.md`;
+
+    if (!config.folder) {
+      return normalizePath(fileName);
+    }
+
+    return normalizePath(`${config.folder}/${fileName}`);
+  }
+
   private getResolvedDailyNoteConfig(): DailyNoteConfig {
     if (this.settings.preferOfficialDailyNotes) {
       const officialConfig = this.getOfficialDailyNotesConfig();
@@ -1243,7 +1275,21 @@ export default class ClockTimerPlugin extends Plugin {
     };
   }
 
-  private getOfficialDailyNotesConfig(): DailyNoteConfig | null {
+  private getDailyNoteConfigForCreation(targetMoment: moment.Moment): DailyNoteConfig {
+    const officialConfig = this.getOfficialDailyNotesConfig();
+
+    if (
+      this.settings.dailyNoteCreateMode === 'official-plugin' &&
+      targetMoment.isSame(moment(), 'day') &&
+      officialConfig
+    ) {
+      return officialConfig;
+    }
+
+    return this.getResolvedDailyNoteConfig();
+  }
+
+  private getOfficialDailyNotesPlugin(): OfficialDailyNotesPlugin | null {
     const internalPlugins = (this.app as App & {
       internalPlugins?: {
         getPluginById?: (id: string) => unknown;
@@ -1253,27 +1299,16 @@ export default class ClockTimerPlugin extends Plugin {
 
     const pluginCandidate =
       internalPlugins?.getPluginById?.('daily-notes') ?? internalPlugins?.plugins?.['daily-notes'];
-    const pluginObject = pluginCandidate as {
-      enabled?: boolean;
-      instance?: {
-        options?: {
-          folder?: string;
-          format?: string;
-          template?: string;
-          templatePath?: string;
-          templateFile?: string;
-          templateLocation?: string;
-        };
-      };
-      options?: {
-        folder?: string;
-        format?: string;
-        template?: string;
-        templatePath?: string;
-        templateFile?: string;
-        templateLocation?: string;
-      };
-    } | null;
+
+    return (pluginCandidate as OfficialDailyNotesPlugin | null) ?? null;
+  }
+
+  private getOfficialDailyNotesConfig(): DailyNoteConfig | null {
+    const pluginObject = this.getOfficialDailyNotesPlugin();
+
+    if (!pluginObject?.enabled) {
+      return null;
+    }
 
     const options = pluginObject?.instance?.options ?? pluginObject?.options;
     const format = options?.format?.trim();
@@ -1294,6 +1329,183 @@ export default class ClockTimerPlugin extends Plugin {
       templatePath,
       source: 'official'
     };
+  }
+
+  private shouldDelegateDailyNoteCreationToOfficialPlugin(dateKey: string): boolean {
+    if (dateKey !== this.getTodayDateKey()) {
+      return false;
+    }
+
+    const officialPlugin = this.getOfficialDailyNotesPlugin();
+    if (!officialPlugin?.enabled) {
+      return false;
+    }
+
+    return this.settings.dailyNoteCreateMode === 'official-plugin';
+  }
+
+  private async waitForExistingDailyNote(
+    candidatePaths: Iterable<string>,
+    timeoutMs = 1500,
+    intervalMs = 50
+  ): Promise<TFile | null> {
+    const deadline = Date.now() + timeoutMs;
+
+    do {
+      for (const candidatePath of candidatePaths) {
+        const candidate = this.app.vault.getAbstractFileByPath(candidatePath);
+        if (candidate instanceof TFile) {
+          return candidate;
+        }
+      }
+
+      if (Date.now() >= deadline) {
+        break;
+      }
+
+      await new Promise((resolve) => window.setTimeout(resolve, intervalMs));
+    } while (true);
+
+    return null;
+  }
+
+  private captureMarkdownFilePaths(): Set<string> {
+    return new Set(this.app.vault.getMarkdownFiles().map((file) => file.path));
+  }
+
+  private getDailyNoteFileNameCandidates(targetMoment: moment.Moment): Set<string> {
+    const fileNames = new Set<string>();
+    const configs = [
+      this.getDailyNoteConfigForCreation(targetMoment),
+      this.getResolvedDailyNoteConfig(),
+      this.getOfficialDailyNotesConfig()
+    ].filter((config): config is DailyNoteConfig => Boolean(config));
+
+    for (const config of configs) {
+      fileNames.add(`${targetMoment.format(config.format)}.md`);
+    }
+
+    fileNames.add(`${targetMoment.format('YYYY-MM-DD')}.md`);
+    return fileNames;
+  }
+
+  private findDetectedDailyNoteCandidate(
+    targetMoment: moment.Moment,
+    beforePaths?: Set<string>
+  ): TFile | null {
+    const fileNameCandidates = this.getDailyNoteFileNameCandidates(targetMoment);
+    const activeFile = this.app.workspace.getActiveFile();
+
+    if (activeFile instanceof TFile && fileNameCandidates.has(activeFile.name)) {
+      return activeFile;
+    }
+
+    const markdownFiles = this.app.vault.getMarkdownFiles();
+    const newCandidates = markdownFiles
+      .filter((file) => !beforePaths?.has(file.path) && fileNameCandidates.has(file.name))
+      .sort((left, right) => right.stat.mtime - left.stat.mtime);
+
+    if (newCandidates.length > 0) {
+      return newCandidates[0];
+    }
+
+    const recentCandidates = markdownFiles
+      .filter((file) => fileNameCandidates.has(file.name))
+      .sort((left, right) => right.stat.mtime - left.stat.mtime);
+
+    return recentCandidates[0] ?? null;
+  }
+
+  private async waitForDetectedDailyNoteCandidate(
+    targetMoment: moment.Moment,
+    expectedPaths: Iterable<string>,
+    beforePaths?: Set<string>,
+    timeoutMs = 1500,
+    intervalMs = 50
+  ): Promise<TFile | null> {
+    const deadline = Date.now() + timeoutMs;
+
+    do {
+      const byPath = await this.waitForExistingDailyNote(expectedPaths, 0, intervalMs);
+      if (byPath) {
+        return byPath;
+      }
+
+      const detected = this.findDetectedDailyNoteCandidate(targetMoment, beforePaths);
+      if (detected) {
+        return detected;
+      }
+
+      if (Date.now() >= deadline) {
+        break;
+      }
+
+      await new Promise((resolve) => window.setTimeout(resolve, intervalMs));
+    } while (true);
+
+    return null;
+  }
+
+  private getAvailableCommandIds(): string[] {
+    const commands = ((this.app as App & {
+      commands?: CommandRegistryLike;
+    }).commands ?? null) as CommandRegistryLike | null;
+
+    return Object.keys(commands?.commands ?? {});
+  }
+
+  private getOfficialDailyNotesCommandIds(): string[] {
+    const preferredIds = [
+      'daily-notes',
+      'daily-notes:open-today',
+      'daily-notes:open-daily-note',
+      'daily-notes:create-daily-note',
+      'daily-notes:goto-today'
+    ];
+    const discoveredIds = this.getAvailableCommandIds().filter(
+      (commandId) =>
+        commandId.startsWith('daily-notes') && /(today|open|create|goto)/i.test(commandId)
+    );
+
+    return [...new Set([...preferredIds, ...discoveredIds])];
+  }
+
+  private getTemplatePathCandidates(templatePath: string): string[] {
+    const normalized = normalizePath(templatePath.trim());
+    if (!normalized) {
+      return [];
+    }
+
+    const candidates = new Set<string>();
+    candidates.add(normalized);
+    candidates.add(normalized.replace(/^\/+/, ''));
+
+    if (!normalized.toLowerCase().endsWith('.md')) {
+      candidates.add(`${normalized}.md`);
+      candidates.add(`${normalized.replace(/^\/+/, '')}.md`);
+    }
+
+    return [...candidates].filter(Boolean);
+  }
+
+  private resolveTemplateFile(templatePath: string): TFile | null {
+    for (const candidatePath of this.getTemplatePathCandidates(templatePath)) {
+      const candidate = this.app.vault.getAbstractFileByPath(candidatePath);
+      if (candidate instanceof TFile) {
+        return candidate;
+      }
+    }
+
+    const templateName = templatePath.trim().split(/[\\/]/).pop()?.trim().toLowerCase();
+    if (!templateName) {
+      return null;
+    }
+
+    return (
+      this.app.vault
+        .getMarkdownFiles()
+        .find((file) => file.path.split('/').pop()?.trim().toLowerCase() === templateName) ?? null
+    );
   }
 
   private async loadPluginData(): Promise<void> {
@@ -1472,8 +1684,8 @@ export default class ClockTimerPlugin extends Plugin {
     }
   }
 
-  private async syncDailyNoteForDate(dateKey: string): Promise<void> {
-    const file = await this.getOrCreateDailyNote(dateKey);
+  private async syncDailyNoteForDate(dateKey: string, existingFile?: TFile): Promise<void> {
+    const file = existingFile ?? (await this.getOrCreateDailyNote(dateKey));
     const eventsBlock = this.renderEventsBlock(dateKey);
     const recordsBlock = this.renderRecordsBlock(dateKey);
     const summaryBlock = this.renderSummaryBlock(dateKey);
@@ -1654,7 +1866,8 @@ export default class ClockTimerPlugin extends Plugin {
 
   private async getOrCreateDailyNote(dateKey: string): Promise<TFile> {
     const targetMoment = moment(dateKey, 'YYYY-MM-DD');
-    const path = this.getDailyNotePath(targetMoment);
+    const config = this.getDailyNoteConfigForCreation(targetMoment);
+    const path = this.getDailyNotePathForConfig(targetMoment, config);
     const existingFile = this.app.vault.getAbstractFileByPath(path);
 
     if (existingFile instanceof TFile) {
@@ -1665,15 +1878,7 @@ export default class ClockTimerPlugin extends Plugin {
       throw new Error(`路径 ${path} 已存在，但不是文件。`);
     }
 
-    const folder = this.getResolvedDailyNoteConfig().folder;
-    if (folder) {
-      await this.ensureFolderExists(folder);
-    }
-
-    if (
-      dateKey === this.getTodayDateKey() &&
-      this.settings.dailyNoteCreateMode === 'official-plugin'
-    ) {
+    if (this.shouldDelegateDailyNoteCreationToOfficialPlugin(dateKey)) {
       const officialFile = await this.tryCreateTodayDailyNoteViaOfficialPlugin();
       if (officialFile) {
         return officialFile;
@@ -1682,36 +1887,35 @@ export default class ClockTimerPlugin extends Plugin {
       new Notice('未能通过 Daily Notes 插件创建今日日志，已回退到模板/默认创建。');
     }
 
-    const initialContent = await this.buildDailyNoteInitialContent(targetMoment);
+    const folder = config.folder;
+    if (folder) {
+      await this.ensureFolderExists(folder);
+    }
+
+    const initialContent = await this.buildDailyNoteInitialContent(targetMoment, config);
     return await this.app.vault.create(path, initialContent);
   }
 
   private async tryCreateTodayDailyNoteViaOfficialPlugin(): Promise<TFile | null> {
-    const todayPath = this.getDailyNotePath(moment());
-    const existingFile = this.app.vault.getAbstractFileByPath(todayPath);
-    if (existingFile instanceof TFile) {
-      return existingFile;
+    const targetMoment = moment();
+    const pluginObject = this.getOfficialDailyNotesPlugin();
+    const officialConfig = this.getOfficialDailyNotesConfig();
+    const expectedPaths = new Set<string>([this.getDailyNotePath(targetMoment)]);
+    const beforePaths = this.captureMarkdownFilePaths();
+
+    if (officialConfig) {
+      expectedPaths.add(this.getDailyNotePathForConfig(targetMoment, officialConfig));
     }
 
-    const internalPlugins = (this.app as App & {
-      internalPlugins?: {
-        getPluginById?: (id: string) => unknown;
-        plugins?: Record<string, unknown>;
-      };
-      commands?: {
-        executeCommandById?: (id: string) => Promise<boolean> | boolean;
-      };
-    }).internalPlugins;
-
-    const pluginCandidate =
-      internalPlugins?.getPluginById?.('daily-notes') ?? internalPlugins?.plugins?.['daily-notes'];
-    const pluginObject = pluginCandidate as {
-      enabled?: boolean;
-      instance?: {
-        createDailyNote?: () => Promise<TFile | null> | TFile | null;
-        createAndOpenDailyNote?: () => Promise<TFile | null> | TFile | null;
-      };
-    } | null;
+    const existingFile = await this.waitForDetectedDailyNoteCandidate(
+      targetMoment,
+      expectedPaths,
+      beforePaths,
+      0
+    );
+    if (existingFile) {
+      return existingFile;
+    }
 
     if (!pluginObject?.enabled) {
       return null;
@@ -1729,8 +1933,12 @@ export default class ClockTimerPlugin extends Plugin {
           return result;
         }
 
-        const created = this.app.vault.getAbstractFileByPath(todayPath);
-        if (created instanceof TFile) {
+        const created = await this.waitForDetectedDailyNoteCandidate(
+          targetMoment,
+          expectedPaths,
+          beforePaths
+        );
+        if (created) {
           return created;
         }
       } catch {
@@ -1739,11 +1947,9 @@ export default class ClockTimerPlugin extends Plugin {
     }
 
     const commands = (this.app as App & {
-      commands?: {
-        executeCommandById?: (id: string) => Promise<boolean> | boolean;
-      };
+      commands?: CommandRegistryLike;
     }).commands;
-    const candidateCommandIds = ['daily-notes', 'daily-notes:open-today'];
+    const candidateCommandIds = this.getOfficialDailyNotesCommandIds();
 
     for (const commandId of candidateCommandIds) {
       try {
@@ -1752,8 +1958,12 @@ export default class ClockTimerPlugin extends Plugin {
           continue;
         }
 
-        const created = this.app.vault.getAbstractFileByPath(todayPath);
-        if (created instanceof TFile) {
+        const created = await this.waitForDetectedDailyNoteCandidate(
+          targetMoment,
+          expectedPaths,
+          beforePaths
+        );
+        if (created) {
           return created;
         }
       } catch {
@@ -1789,17 +1999,21 @@ export default class ClockTimerPlugin extends Plugin {
     return await this.app.vault.create(path, `${this.renderInboxBlock()}\n`);
   }
 
-  private async buildDailyNoteInitialContent(targetMoment: moment.Moment): Promise<string> {
-    const templatePath = this.getResolvedDailyNoteConfig().templatePath.trim();
+  private async buildDailyNoteInitialContent(
+    targetMoment: moment.Moment,
+    config: DailyNoteConfig
+  ): Promise<string> {
+    const templatePath = config.templatePath.trim();
+    const defaultTitle = targetMoment.format(config.format);
 
     if (!templatePath) {
-      return `# ${targetMoment.format('YYYY-MM-DD')}\n\n`;
+      return `# ${defaultTitle}\n\n`;
     }
 
-    const templateFile = this.app.vault.getAbstractFileByPath(normalizePath(templatePath));
+    const templateFile = this.resolveTemplateFile(templatePath);
     if (!(templateFile instanceof TFile)) {
       new Notice(`日志模板未找到：${templatePath}`);
-      return `# ${targetMoment.format('YYYY-MM-DD')}\n\n`;
+      return `# ${defaultTitle}\n\n`;
     }
 
     const templateContent = await this.app.vault.read(templateFile);
