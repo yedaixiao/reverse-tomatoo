@@ -3,7 +3,7 @@
   "name": "reverse-tomato",
   "version": "1.0.1",
   "minAppVersion": "1.5.0",
-  "description": "侧栏时钟计时插件：自动写入当日日记并统计事件耗时。支持事件分析，提供可视化，支持事件补录和收集箱收集和分配事件",
+  "description": "Sidebar clock and time-tracking plugin with automatic daily note logging, event duration tracking, analysis, visualization, backfilling, and inbox-based task collection.",
   "author": "yedaixiao",
   "authorUrl": "https://github.com/yedaixiao",
   "isDesktopOnly": false

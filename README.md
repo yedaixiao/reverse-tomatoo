@@ -1,7 +1,7 @@
 # reverse-tomato
 设计哲学：
 番茄钟的倒计时总会让我不舒服，我们要管理的是精力，而非强制自己在一定时间段内必须做什么什么，我们要做的是记录，而非像工作一样强制要求你做什么事情。
-一个用于 Obsidian 的侧栏计时插件：
+一个侧栏计时插件：
 
 - 在侧栏中显示时钟与计时控制
 - 支持亮色 / 暗色 / 跟随系统主题切换
@@ -15,7 +15,7 @@
 Design Philosophy
 The Pomodoro countdown always makes me feel uncomfortable. What we should manage is energy, not force ourselves to do specific tasks within a fixed time block. What we want is logging/recording, not a work-like system that rigidly demands you do something.
 
-An Obsidian sidebar timer plugin:
+An sidebar timer plugin:
 
 Display a clock and timer controls in the sidebar
 Support Light / Dark / Follow system theme switching
